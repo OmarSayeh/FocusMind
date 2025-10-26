@@ -23,7 +23,11 @@ interface NudgeResponse {
   nudge_type?: string;
   platform?: string;
   attention_score?: number;  // Add attention score to the response
+  focus_score?: number;
+  reason?: string;
 }
+
+type AgentMode = 'goggins' | 'health';
 
 interface FocusChartResponse {
   success: boolean;
@@ -53,6 +57,8 @@ function App() {
   const [nudgeExecuted, setNudgeExecuted] = useState(false);
   const [notificationSent, setNotificationSent] = useState(false);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
+  const [agentMode, setAgentMode] = useState<AgentMode>('goggins');
+  const [lastNudgeType, setLastNudgeType] = useState<'voice' | 'health' | null>(null);
 
   // Pomodoro Timer State
   const [pomodoroTime, setPomodoroTime] = useState(25 * 60); // 25 minutes (1500 seconds) - CHANGE THIS VALUE TO ADJUST TIMER
@@ -99,7 +105,10 @@ function App() {
         setIsBreakTime(false);
         console.log('🛌 Exiting break time mode');
       }
-      setTimeout(() => setNudgeExecuted(false), 3000);
+      setTimeout(() => {
+        setNudgeExecuted(false);
+        setLastNudgeType(null);
+      }, 3000);
     };
     audio.onerror = (e) => {
       console.error(`🚫 ${audioType} audio playback error:`, e);
@@ -108,6 +117,10 @@ function App() {
       if (audioType === 'break') {
         setIsBreakTime(false);
       }
+      setTimeout(() => {
+        setNudgeExecuted(false);
+        setLastNudgeType(null);
+      }, 3000);
     };
 
     try {
@@ -122,7 +135,10 @@ function App() {
       if (audioType === 'break') {
         setIsBreakTime(false);
       }
-      setTimeout(() => setNudgeExecuted(false), 5000);
+      setTimeout(() => {
+        setNudgeExecuted(false);
+        setLastNudgeType(null);
+      }, 5000);
       return false;
     }
   };
@@ -131,7 +147,7 @@ function App() {
   useEffect(() => {
     if ('Notification' in window) {
       setNotificationPermission(Notification.permission);
-      
+
       if (Notification.permission === 'default') {
         Notification.requestPermission().then((permission) => {
           setNotificationPermission(permission);
@@ -141,6 +157,21 @@ function App() {
     } else {
       console.warn('🚫 This browser does not support notifications');
     }
+  }, []);
+
+  useEffect(() => {
+    const fetchAgentMode = async () => {
+      try {
+        const response = await axios.get<{ mode: AgentMode }>('http://localhost:8000/agent-mode');
+        if (response.data?.mode) {
+          setAgentMode(response.data.mode);
+        }
+      } catch (error) {
+        console.error('Error fetching agent mode:', error);
+      }
+    };
+
+    fetchAgentMode();
   }, []);
 
   // Function to show browser notification
@@ -228,10 +259,24 @@ function App() {
     return null;
   };
 
+  const updateAgentMode = async (mode: AgentMode) => {
+    if (mode === agentMode) {
+      return;
+    }
+
+    try {
+      await axios.post('http://localhost:8000/set-agent-mode', { mode });
+      setAgentMode(mode);
+      console.log(`🧠 Agent mode set to ${mode}`);
+    } catch (error) {
+      console.error('Error updating agent mode:', error);
+    }
+  };
+
   const fetchMotivation = async (reset: boolean = false) => {
     setLoading(true);
     try {
-      const url = reset 
+      const url = reset
         ? 'http://localhost:8000/motivation?reset=true'
         : 'http://localhost:8000/motivation';
       
@@ -269,10 +314,15 @@ function App() {
         
         // ONLY trigger automatic voice nudge if we're NOT in break time
         if (!isBreakTime) {
-          console.log('🚨 Attention score dropped! Automatically getting new motivational voice nudge...');
-          // Trigger voice nudge after a short delay to show the score change first
+          if (agentMode === 'health') {
+            console.log('🩺 Attention drop detected — triggering Health & Focus Boost intervention...');
+          } else {
+            console.log('🚨 Attention score dropped! Automatically getting new motivational voice nudge...');
+          }
+          const triggerNudge = agentMode === 'health' ? getHealthBoostNudge : getVoiceNudge;
+          // Trigger appropriate nudge after a short delay to show the score change first
           setTimeout(() => {
-            getVoiceNudge();
+            triggerNudge();
           }, 500);
         } else {
           console.log('🛌 In break time - skipping automatic voice nudge');
@@ -288,49 +338,94 @@ function App() {
   const getVoiceNudge = async () => {
     setLoading(true);
     setNudgeExecuted(false); // Reset indicator
-    
+
     try {
       console.log('🚀 Calling voice nudge...');
       const response = await axios.post<NudgeResponse>('http://localhost:8000/get-voice-nudge');
-      
-      if (response.data.success && motivationData) {
+
+      if (response.data.success) {
         // Set visual indicator that nudge script executed
         setNudgeExecuted(true);
-        
+        setLastNudgeType('voice');
+
         // ONLY update message if we're NOT in break time to prevent flickering
         if (!isBreakTime) {
-          // Update both message and attention score from the response
-          setMotivationData({
-            ...motivationData,
+          setMotivationData((prev) => ({
             message: response.data.message,
-            attention_score: response.data.attention_score ?? motivationData.attention_score  // Use response score if available, fallback to current
-          });
+            attention_score: response.data.attention_score ?? prev?.attention_score ?? 0
+          }));
           console.log('💪 Updated message with new David Goggins voice quote!');
         } else {
           console.log('🛌 In break mode - voice nudge triggered but not updating message to prevent flickering');
         }
-        
+
         console.log('🎯 Voice nudge executed successfully!');
-        
+
         // Play audio if available
         if (response.data.audio_url) {
           const audioUrl = `http://localhost:8000${response.data.audio_url}`;
           console.log('🔊 Playing voiceover:', audioUrl);
-          
+
           const success = await playAudio(audioUrl, 'voice');
-          
+
           if (!success) {
             // Keep indicator visible even if audio fails
-            setTimeout(() => setNudgeExecuted(false), 5000);
+            setTimeout(() => {
+              setNudgeExecuted(false);
+              setLastNudgeType(null);
+            }, 5000);
           }
         } else {
           // No audio, hide indicator after 3 seconds
-          setTimeout(() => setNudgeExecuted(false), 3000);
+          setTimeout(() => {
+            setNudgeExecuted(false);
+            setLastNudgeType(null);
+          }, 3000);
         }
       }
     } catch (error) {
       console.error('Error getting voice nudge:', error);
       setNudgeExecuted(false);
+      setLastNudgeType(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getHealthBoostNudge = async () => {
+    setLoading(true);
+    setNudgeExecuted(false);
+
+    try {
+      console.log('🩺 Requesting Health & Focus Boost nudge...');
+      const response = await axios.post<NudgeResponse>('http://localhost:8000/get-health-boost-nudge');
+
+      if (response.data.success) {
+        setNudgeExecuted(true);
+        setLastNudgeType('health');
+
+        setMotivationData((prev) => {
+          const nextScore = response.data.attention_score ?? response.data.focus_score ?? prev?.attention_score ?? 0;
+          return {
+            message: response.data.message,
+            attention_score: Math.round(nextScore)
+          };
+        });
+
+        if (response.data.reason) {
+          console.log(`🩺 Health boost reason: ${response.data.reason}`);
+        }
+        console.log('🩺 Health boost provided:', response.data.message);
+
+        setTimeout(() => {
+          setNudgeExecuted(false);
+          setLastNudgeType(null);
+        }, 4000);
+      }
+    } catch (error) {
+      console.error('Error getting health boost nudge:', error);
+      setNudgeExecuted(false);
+      setLastNudgeType(null);
     } finally {
       setLoading(false);
     }
@@ -361,19 +456,24 @@ function App() {
       
       if (response.data.success && response.data.audio_url) {
         setNudgeExecuted(true);
-        
+        setLastNudgeType('voice');
+
         const audioUrl = `http://localhost:8000${response.data.audio_url}`;
         console.log('🔊 Playing current message audio:', audioUrl);
-        
+
         const success = await playAudio(audioUrl, 'voice');
-        
+
         if (!success) {
-          setTimeout(() => setNudgeExecuted(false), 5000);
+          setTimeout(() => {
+            setNudgeExecuted(false);
+            setLastNudgeType(null);
+          }, 5000);
         }
       }
     } catch (error) {
       console.error('Error reading current message:', error);
       setNudgeExecuted(false);
+      setLastNudgeType(null);
     } finally {
       setLoading(false);
     }
@@ -489,8 +589,11 @@ function App() {
             setCurrentAudio(null);
             setIsBreakTime(false);
             console.log('🛌 Exiting break time mode');
-            setTimeout(() => setNudgeExecuted(false), 3000);
-            
+            setTimeout(() => {
+              setNudgeExecuted(false);
+              setLastNudgeType(null);
+            }, 3000);
+
             // Show focus chart after break audio finishes
             setTimeout(() => {
               getFocusChart();
@@ -510,8 +613,11 @@ function App() {
             console.error('❌ BREAK audio play failed:', playError);
             console.error('❌ Failed break audio URL:', audioUrl);
             setIsBreakTime(false);
-            setTimeout(() => setNudgeExecuted(false), 5000);
-            
+            setTimeout(() => {
+              setNudgeExecuted(false);
+              setLastNudgeType(null);
+            }, 5000);
+
             // Show focus chart even if audio fails
             setTimeout(() => {
               getFocusChart();
@@ -520,8 +626,11 @@ function App() {
         } else {
           console.warn('⚠️ No audio URL provided in break nudge response');
           setIsBreakTime(false);
-          setTimeout(() => setNudgeExecuted(false), 3000);
-          
+          setTimeout(() => {
+            setNudgeExecuted(false);
+            setLastNudgeType(null);
+          }, 3000);
+
           // Show focus chart even without audio
           setTimeout(() => {
             getFocusChart();
@@ -915,10 +1024,10 @@ function App() {
         message={motivationData?.message || "Welcome to FocusMind! Click 'Get Voice Nudge' to hear David Goggins motivation."} 
         loading={loading}
       />
-      <Dashboard 
+      <Dashboard
         attentionScore={motivationData?.attention_score || 0}
         onDecreaseAttention={decreaseAttention}
-        onGetVoiceNudge={readCurrentMessage}
+        onGetVoiceNudge={agentMode === 'goggins' ? readCurrentMessage : getHealthBoostNudge}
         onGetNotificationNudge={getNotificationNudge}
         loading={loading}
         nudgeExecuted={nudgeExecuted}
@@ -931,6 +1040,9 @@ function App() {
             });
           }
         }}
+        agentMode={agentMode}
+        onAgentModeChange={updateAgentMode}
+        lastNudgeType={lastNudgeType}
         pomodoroTimer={pomodoroTimerJSX}
       />
       
