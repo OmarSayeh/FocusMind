@@ -85,13 +85,14 @@ class FaceFocusTracker:
         self.eye_vertical_history = deque(maxlen=5)
         self.head_pitch_history = deque(maxlen=5)
         self.head_yaw_history = deque(maxlen=5)
-        
+
         # Face tracking data
         self.expression = None
         self.eyes_open_ratio = 0.0
         self.eye_direction = None
         self.head_direction = None
         self.gaze_label = ""
+        self.last_focus_metrics: Optional[Dict[str, Any]] = None
         
         print("🎯 FaceFocusTracker initialized")
         print(f"📡 Backend URL: {self.backend_url}")
@@ -277,7 +278,7 @@ class FaceFocusTracker:
             # Estimate current rate
             blink_rate = (self.blink_state['blink_count'] / max(time_elapsed, 1.0)) * 60.0
         
-        return {
+        metrics = {
             'face_present': face_present,
             'eyes_open_ratio': self.eyes_open_ratio,
             'eyes_closed_duration': self.eyes_closed_duration,
@@ -290,6 +291,38 @@ class FaceFocusTracker:
             'landmarks_array': pts if face_present else None,
             'frame_shape': (h, w)
         }
+
+        # Store a lightweight copy of the latest focus metrics for backend nudges
+        self.last_focus_metrics = {
+            'face_present': metrics['face_present'],
+            'eyes_open_ratio': float(metrics['eyes_open_ratio']),
+            'eyes_closed_duration': float(metrics['eyes_closed_duration']),
+            'gaze_direction': metrics['gaze_direction'],
+            'gaze_away_ratio': float(metrics['gaze_away_ratio']),
+            'head_pitch': float(metrics['head_pitch']),
+            'head_yaw': float(metrics['head_yaw'])
+        }
+
+        return metrics
+
+    def _serialize_metrics_for_backend(self) -> Optional[Dict[str, Any]]:
+        """Convert the last focus metrics into JSON-serializable primitives."""
+        if not self.last_focus_metrics:
+            return None
+
+        metrics = self.last_focus_metrics
+        try:
+            return {
+                'face_present': bool(metrics.get('face_present', False)),
+                'eyes_open_ratio': float(metrics.get('eyes_open_ratio', 0.0)),
+                'eyes_closed_duration': float(metrics.get('eyes_closed_duration', 0.0)),
+                'gaze_direction': str(metrics.get('gaze_direction', 'Center')),
+                'gaze_away_ratio': float(metrics.get('gaze_away_ratio', 0.0)),
+                'head_pitch': float(metrics.get('head_pitch', 0.0)),
+                'head_yaw': float(metrics.get('head_yaw', 0.0))
+            }
+        except (TypeError, ValueError):
+            return None
 
     def compute_and_update_focus_score(self, metrics, landmarks_array=None, frame_shape=None):
         """Compute focus score using enhanced FocusScore.py functions and update backend if needed"""
@@ -350,9 +383,16 @@ class FaceFocusTracker:
     def send_focus_update(self, focus_score):
         """Send focus score update to backend"""
         try:
-            response = requests.post(f"{self.backend_url}/update-focus-score", 
-                                   json={"focus_score": focus_score}, 
-                                   timeout=1.0)
+            payload = {"focus_score": focus_score}
+            metrics_payload = self._serialize_metrics_for_backend()
+            if metrics_payload:
+                payload["metrics"] = metrics_payload
+
+            response = requests.post(
+                f"{self.backend_url}/update-focus-score",
+                json=payload,
+                timeout=1.0
+            )
             if response.status_code == 200:
                 print(f"📊 Focus score updated: {focus_score:.1f}")
             else:
@@ -379,11 +419,30 @@ class FaceFocusTracker:
         """Trigger a motivational quote via the backend"""
         try:
             print(f"🚨 Focus dropped below {threshold}% - triggering motivational quote!")
-            response = requests.post(f"{self.backend_url}/trigger-auto-motivation", 
-                                   json={"threshold": threshold, "focus_score": self.current_focus_score}, 
-                                   timeout=3.0)
+            payload = {
+                "threshold": threshold,
+                "focus_score": self.current_focus_score
+            }
+
+            metrics_payload = self._serialize_metrics_for_backend()
+            if metrics_payload:
+                payload["metrics"] = metrics_payload
+
+            response = requests.post(
+                f"{self.backend_url}/trigger-auto-motivation",
+                json=payload,
+                timeout=3.0
+            )
             if response.status_code == 200:
-                print("💪 Motivational quote triggered successfully")
+                try:
+                    data = response.json()
+                except json.JSONDecodeError:
+                    data = {}
+
+                if data.get("nudge_type") == "health_boost" and data.get("message"):
+                    print(f"🩺 Health Boost: {data['message']}")
+                else:
+                    print("💪 Motivational quote triggered successfully")
             else:
                 print(f"⚠️ Failed to trigger quote: {response.status_code}")
         except requests.exceptions.RequestException as e:

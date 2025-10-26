@@ -130,9 +130,25 @@
   background: rgba(0, 168, 255, 0.15);
   border-color: rgba(0, 168, 255, 0.5);
   transform: translateY(-2px);
-  box-shadow: 
+  box-shadow:
     0 8px 24px rgba(0, 168, 255, 0.2),
     inset 0 0 20px rgba(0, 168, 255, 0.15);
+}
+
+.auto-nudge-info.health-mode {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.35);
+  color: #a7f3d0;
+  box-shadow: inset 0 0 20px rgba(16, 185, 129, 0.12);
+}
+
+.auto-nudge-info.health-mode:hover {
+  background: rgba(16, 185, 129, 0.18);
+  border-color: rgba(16, 185, 129, 0.55);
+  box-shadow:
+    0 8px 24px rgba(16, 185, 129, 0.25),
+    inset 0 0 20px rgba(16, 185, 129, 0.15);
+  color: #d1fae5;
 }
 
 .nudge-buttons {
@@ -149,9 +165,55 @@
   margin: 0 0 1.25rem 0;
   text-align: center;
   letter-spacing: -0.02em;
-  text-shadow: 
+  text-shadow:
     0 0 20px rgba(0, 168, 255, 0.5),
     0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.agent-toggle {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.agent-toggle-button {
+  flex: 1 1 180px;
+  padding: 0.65rem 1.25rem;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 168, 255, 0.3);
+  background: rgba(0, 168, 255, 0.08);
+  color: #7dd3fc;
+  font-weight: 600;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.agent-toggle-button:hover {
+  border-color: rgba(0, 168, 255, 0.6);
+  background: rgba(0, 168, 255, 0.15);
+  color: #ffffff;
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(0, 168, 255, 0.25);
+}
+
+.agent-toggle-button.active {
+  background: linear-gradient(135deg, #00a8ff 0%, #2563eb 100%);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow:
+    0 15px 36px rgba(37, 99, 235, 0.35),
+    0 0 40px rgba(37, 99, 235, 0.2);
+}
+
+.agent-toggle-button:disabled {
+  opacity: 0.75;
+  cursor: default;
+  transform: none;
+  box-shadow: none;
 }
 
 /* Button Styles */
@@ -238,16 +300,30 @@
 .voice-nudge-button {
   background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
   border-color: rgba(2, 132, 199, 0.5);
-  box-shadow: 
+  box-shadow:
     0 10px 30px rgba(2, 132, 199, 0.4),
     0 0 40px rgba(2, 132, 199, 0.2);
 }
 
+.voice-nudge-button.health-mode {
+  background: linear-gradient(135deg, #16a34a 0%, #0f766e 100%);
+  border-color: rgba(16, 185, 129, 0.5);
+  box-shadow:
+    0 10px 30px rgba(15, 118, 110, 0.45),
+    0 0 40px rgba(15, 118, 110, 0.25);
+}
+
 .voice-nudge-button:hover:not(:disabled) {
   transform: translateY(-3px) scale(1.02);
-  box-shadow: 
+  box-shadow:
     0 15px 40px rgba(2, 132, 199, 0.6),
     0 0 60px rgba(2, 132, 199, 0.4);
+}
+
+.voice-nudge-button.health-mode:hover:not(:disabled) {
+  box-shadow:
+    0 15px 40px rgba(15, 118, 110, 0.6),
+    0 0 60px rgba(15, 118, 110, 0.4);
 }
 
 .voice-nudge-button:active:not(:disabled) {
@@ -257,6 +333,10 @@
 .voice-nudge-button.nudge-executed {
   background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
   animation: pulse-glow-blue 2s infinite;
+}
+
+.voice-nudge-button.health-mode.nudge-executed {
+  animation: pulse-glow-green 2s infinite;
 }
 
 .notification-nudge-button {
@@ -327,16 +407,36 @@
   animation: slide-in 0.3s ease-out, pulse-glow-blue 2s infinite;
 }
 
+.health-indicator {
+  background: linear-gradient(135deg, #16a34a 0%, #0f766e 100%);
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  animation: slide-in 0.3s ease-out, pulse-glow-green 2s infinite;
+  color: #ecfdf5;
+}
+
 @keyframes pulse-glow-blue {
   0%, 100% {
-    box-shadow: 
+    box-shadow:
       0 10px 30px rgba(0, 168, 255, 0.4),
       0 0 40px rgba(0, 168, 255, 0.3);
   }
   50% {
-    box-shadow: 
+    box-shadow:
       0 15px 40px rgba(0, 168, 255, 0.6),
       0 0 60px rgba(0, 168, 255, 0.5);
+  }
+}
+
+@keyframes pulse-glow-green {
+  0%, 100% {
+    box-shadow:
+      0 10px 30px rgba(16, 185, 129, 0.35),
+      0 0 40px rgba(16, 185, 129, 0.25);
+  }
+  50% {
+    box-shadow:
+      0 15px 40px rgba(16, 185, 129, 0.55),
+      0 0 60px rgba(16, 185, 129, 0.4);
   }
 }
 

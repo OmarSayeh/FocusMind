@@ -3,6 +3,7 @@ import subprocess
 import json
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +24,12 @@ attention_score = 100
 
 # Global focus score tracking for the current session
 focus_score_history = []
+
+# Agent mode state
+agent_mode = "goggins"
+
+# Store the most recent focus metrics from the tracker for health interventions
+last_focus_metrics = None  # type: Optional["FocusMetrics"]
 
 # Global face tracking variables
 face_tracker = None
@@ -60,9 +67,119 @@ class MotivationResponse(BaseModel):
     message: str
     attention_score: int
 
+
+class FocusMetrics(BaseModel):
+    face_present: bool
+    eyes_open_ratio: float
+    eyes_closed_duration: float
+    gaze_direction: str
+    gaze_away_ratio: float
+    head_pitch: float
+    head_yaw: float
+
+
+class AgentModeRequest(BaseModel):
+    mode: str
+
+
+class HealthBoostRequest(BaseModel):
+    metrics: Optional[FocusMetrics] = None
+    focus_score: Optional[float] = None
+
+
+HEALTH_FOCUS_RESPONSES = {
+    "face_absent": [
+        "Looks like you stepped away — take a quick break, stretch, and come back refreshed.",
+        "Camera can’t see you — if you’re here, adjust your position or lighting.",
+        "You’ve been off-screen for a bit; re-center yourself before diving back in."
+    ],
+    "eyes_open_low": [
+        "Your eyes look tired — close them for 10 seconds to rest them.",
+        "Blink a few times or splash some water on your face; eye dryness kills focus fast.",
+        "Try the 20-20-20 rule: every 20 minutes, look at something 20 ft away for 20 seconds."
+    ],
+    "eyes_closed_duration": [
+        "You seem drowsy — take 3 deep breaths or stand up for a quick stretch.",
+        "If you’re sleepy, a 5-minute walk or splash of cold water helps reset alertness.",
+        "Try drinking a bit of water — dehydration often feels like fatigue."
+    ],
+    "gaze_direction": [
+        "You’re looking away often — bring your eyes back to the screen and re-engage.",
+        "Focus wandered off — what part of your notes needs your attention right now?",
+        "If your mind drifted, try summarizing the last sentence you read out loud."
+    ],
+    "gaze_away_ratio": [
+        "Your eyes have been off-screen for a while — take a 30-second reset, then refocus.",
+        "Try minimizing distractions around you — your gaze keeps getting pulled away.",
+        "Maybe it’s time to review goals for this study block — a quick refocus helps."
+    ],
+    "head_pitch": [
+        "Looks like you’re looking down a lot — lift your head to ease neck strain.",
+        "If you’re typing, great — but remember to look up occasionally to relax your neck.",
+        "Head tilted down can reduce alertness; stretch your neck gently upwards."
+    ],
+    "head_yaw": [
+        "Your head’s turning away — limit distractions in your peripheral view.",
+        "Try facing the screen directly — this helps your mind align with your task.",
+        "You’re glancing away — bring your attention back to the main window."
+    ]
+}
+
+ALL_HEALTH_RESPONSES = [msg for responses in HEALTH_FOCUS_RESPONSES.values() for msg in responses]
+
+
+def choose_health_intervention(metrics: Optional[FocusMetrics]):
+    """Pick a context-aware micro-intervention based on focus metrics."""
+    if metrics is None:
+        return random.choice(ALL_HEALTH_RESPONSES), "general"
+
+    if not metrics.face_present:
+        return random.choice(HEALTH_FOCUS_RESPONSES["face_absent"]), "face_absent"
+
+    if metrics.eyes_closed_duration >= 2.5:
+        return random.choice(HEALTH_FOCUS_RESPONSES["eyes_closed_duration"]), "eyes_closed_duration"
+
+    if metrics.eyes_open_ratio <= 0.3:
+        return random.choice(HEALTH_FOCUS_RESPONSES["eyes_open_low"]), "eyes_open_low"
+
+    gaze_direction = metrics.gaze_direction.lower()
+    if gaze_direction not in {"center", "forward"}:
+        return random.choice(HEALTH_FOCUS_RESPONSES["gaze_direction"]), "gaze_direction"
+
+    if metrics.gaze_away_ratio >= 0.6:
+        return random.choice(HEALTH_FOCUS_RESPONSES["gaze_away_ratio"]), "gaze_away_ratio"
+
+    if metrics.head_pitch <= -25.0:
+        return random.choice(HEALTH_FOCUS_RESPONSES["head_pitch"]), "head_pitch"
+
+    if abs(metrics.head_yaw) >= 25.0:
+        return random.choice(HEALTH_FOCUS_RESPONSES["head_yaw"]), "head_yaw"
+
+    return random.choice(ALL_HEALTH_RESPONSES), "general"
+
 @app.get("/")
 async def root():
     return {"message": "FocusMind API is running"}
+
+
+@app.get("/agent-mode")
+async def get_agent_mode():
+    """Return the currently active coaching agent."""
+    return {"mode": agent_mode}
+
+
+@app.post("/set-agent-mode")
+async def set_agent_mode(request: AgentModeRequest):
+    """Switch between motivational coach and health boost micro-interventions."""
+    global agent_mode
+
+    requested_mode = request.mode.lower()
+    if requested_mode not in {"goggins", "health"}:
+        raise HTTPException(status_code=400, detail="Invalid agent mode")
+
+    agent_mode = requested_mode
+    return {"success": True, "mode": agent_mode}
+
 
 @app.get("/motivation", response_model=MotivationResponse)
 async def get_motivation(reset: bool = False):
@@ -250,6 +367,31 @@ async def generate_voice_audio(request: VoiceAudioRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating voice audio: {str(e)}")
 
+
+@app.post("/get-health-boost-nudge")
+async def get_health_boost_nudge(request: Optional[HealthBoostRequest] = None):
+    """Return a Health & Focus Boost micro-intervention based on the latest focus metrics."""
+    global attention_score, last_focus_metrics
+
+    if request is None:
+        request = HealthBoostRequest()
+
+    metrics = request.metrics or last_focus_metrics
+    if request.metrics is not None:
+        last_focus_metrics = request.metrics
+
+    message, reason = choose_health_intervention(metrics)
+
+    return {
+        "success": True,
+        "message": message,
+        "source": "Health & Focus Boost",
+        "nudge_type": "health_boost",
+        "reason": reason,
+        "focus_score": request.focus_score if request.focus_score is not None else attention_score,
+        "attention_score": attention_score
+    }
+
 @app.post("/get-notification-nudge")
 async def get_notification_nudge():
     """Send a system notification by running nudge.py script with notification argument"""
@@ -330,19 +472,26 @@ async def get_nudge_quote():
 # Face Tracking Integration Endpoints
 class FocusScoreUpdate(BaseModel):
     focus_score: float
+    metrics: Optional[FocusMetrics] = None
+
 
 class AutoMotivationTrigger(BaseModel):
     threshold: int
     focus_score: float
+    metrics: Optional[FocusMetrics] = None
 
 @app.post("/update-focus-score")
 async def update_focus_score(request: FocusScoreUpdate):
     """Update the attention score from face tracking system"""
-    global attention_score, focus_score_history
-    
+    global attention_score, focus_score_history, last_focus_metrics
+
     # Update global attention score
     attention_score = max(0, min(100, request.focus_score))
-    
+
+    # Store latest focus metrics for health boost agent if provided
+    if request.metrics is not None:
+        last_focus_metrics = request.metrics
+
     # Add to focus score history for analytics
     focus_score_history.append({
         "timestamp": datetime.now(),
@@ -362,15 +511,35 @@ async def update_focus_score(request: FocusScoreUpdate):
 @app.post("/trigger-auto-motivation")
 async def trigger_auto_motivation(request: AutoMotivationTrigger):
     """Trigger automatic motivational quote when focus drops below thresholds"""
-    global attention_score
-    
+    global attention_score, agent_mode, last_focus_metrics
+
     try:
         print(f"🚨 Auto-motivation triggered! Focus dropped below {request.threshold}% (current: {request.focus_score:.1f}%)")
-        
+
+        if request.metrics is not None:
+            last_focus_metrics = request.metrics
+
+        metrics = request.metrics or last_focus_metrics
+
+        if agent_mode.lower() == "health":
+            message, reason = choose_health_intervention(metrics)
+
+            response_data = {
+                "success": True,
+                "message": message,
+                "source": "Health & Focus Boost",
+                "nudge_type": "health_boost",
+                "threshold": request.threshold,
+                "focus_score": request.focus_score,
+                "reason": reason
+            }
+
+            return response_data
+
         # Run nudge.py script with 'voice' argument and current attention score
         result = subprocess.run(
-            ["py", "nudge.py", "voice", str(int(request.focus_score))], 
-            capture_output=True, 
+            ["py", "nudge.py", "voice", str(int(request.focus_score))],
+            capture_output=True,
             text=True, 
             cwd=os.path.dirname(os.path.abspath(__file__))
         )
